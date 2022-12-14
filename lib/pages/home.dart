@@ -2,7 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:tienda/models/all.dart';
+import 'package:tienda/services/socketService.dart';
+import 'package:pie_chart/pie_chart.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -11,15 +14,28 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  List<Band> bands = [
-    Band(id: "1", name: "Metalica", votes: 6),
-    Band(id: "2", name: "Qeen", votes: 6),
-    Band(id: "3", name: "Mana", votes: 6),
-    Band(id: "4", name: "Bob Jovi", votes: 6),
-    Band(id: "5", name: "Michael Jacson", votes: 6),
-    Band(id: "6", name: "Cristina Agiler", votes: 6),
-    Band(id: "7", name: "Merly monror", votes: 6),
-  ];
+  late final SocketService socketServer;
+  List<Band> bands = [];
+
+  @override
+  void initState() {
+    socketServer = Provider.of<SocketService>(context, listen: false);
+    super.initState();
+    socketServer.on('band-conection', _handleActiveBands);
+  }
+
+  _handleActiveBands(payload) {
+    setState(() {
+      bands = (payload as List).map((e) => Band.fromMap(e)).toList();
+    });
+  }
+
+  @override
+  dispose() {
+    super.dispose();
+    socketServer.socket.off("band-conection");
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -29,14 +45,84 @@ class _HomePageState extends State<HomePage> {
               style: TextStyle(color: Color.fromARGB(255, 0, 0, 0))),
         ),
         backgroundColor: Colors.white,
+        elevation: 1,
+        actions: [
+          Container(
+            margin: const EdgeInsets.only(right: 10),
+            child: socketServer.servertStatus == ServerStatus.Online
+                // ignore: dead_code
+                ? Icon(
+                    Icons.check_circle,
+                    color: Colors.green[300],
+                  )
+                // ignore: dead_code
+                : Icon(
+                    Icons.offline_bolt,
+                    color: Colors.red[300],
+                  ),
+          )
+        ],
       ),
-      body: ListView.builder(
-        itemCount: bands.length,
-        itemBuilder: (context, i) => _bandTitle(bands[i]),
+      body: Column(
+        children: [
+          _showGraph(),
+          Expanded(
+            child: ListView.builder(
+              itemCount: bands.length,
+              itemBuilder: (context, i) => _bandTitle(bands[i]),
+            ),
+          )
+        ],
       ),
       floatingActionButton: FloatingActionButton(
           elevation: 1, onPressed: _addNewBand, child: const Icon(Icons.add)),
     );
+  }
+
+  Widget _showGraph() {
+    List<Color> colorList = [
+      const Color.fromARGB(255, 225, 239, 250),
+      const Color.fromARGB(255, 142, 200, 247),
+      const Color.fromRGBO(252, 228, 236, 1),
+      const Color.fromRGBO(244, 143, 177, 1),
+      const Color.fromRGBO(255, 253, 231, 1),
+      const Color.fromRGBO(255, 245, 157, 1),
+    ];
+    Map<String, double> dataMap = {};
+    for (var band in bands) {
+      dataMap.putIfAbsent(band.name, () => band.vote.toDouble());
+    }
+    return SizedBox(
+        width: double.infinity,
+        height: 200,
+        child: bands.isEmpty
+            ? const Center(child: Text("....loading "))
+            : PieChart(
+                dataMap: dataMap,
+                animationDuration: const Duration(milliseconds: 800),
+                chartLegendSpacing: 32,
+                chartRadius: MediaQuery.of(context).size.width / 3.2,
+                colorList: colorList,
+                initialAngleInDegree: 0,
+                chartType: ChartType.ring,
+                ringStrokeWidth: 32,
+                centerText: "HYBRID",
+                legendOptions: const LegendOptions(
+                  showLegendsInRow: false,
+                  legendPosition: LegendPosition.right,
+                  showLegends: true,
+                  legendTextStyle: TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                chartValuesOptions: const ChartValuesOptions(
+                  showChartValueBackground: true,
+                  showChartValues: true,
+                  showChartValuesInPercentage: false,
+                  showChartValuesOutside: false,
+                  decimalPlaces: 1,
+                ),
+              ));
   }
 
   Widget _bandTitle(Band band) => Dismissible(
@@ -61,11 +147,16 @@ class _HomePageState extends State<HomePage> {
           child: Text(band.name.substring(0, 2)),
         ),
         title: Text(band.name),
-        trailing: Text("${band.votes}"),
-        onTap: () => _onTapEvent(band.name),
+        trailing: Text("${band.vote}"),
+        onTap: () => _onTapEvent(band.id),
       ));
+
   _onTapEvent(String name) {
-    print(name);
+    print("🚀 ~ file: home.dart:97 ~ _HomePageState ~ _onTapEvent ~ $name");
+    socketServer.emit(
+      "updateBand",
+      {"id": name},
+    );
   }
 
   _addNewBand() {
@@ -107,19 +198,20 @@ class _HomePageState extends State<HomePage> {
 
   void _addBandToList(String text) {
     if (text.length > 3) {
-      print("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx $text");
-      bands.add(Band(id: "${bands.length + 1}", name: text, votes: 0));
-      setState(() {});
+      setState(() {
+        socketServer.emit('createBand', {"name": text});
+        bands.add(Band(id: "${bands.length + 1}", name: text, vote: 0));
+        print(
+            "🚀 ~ file: home.dart:142 ~ _HomePageState ~ void_addBandToList ~ $text");
+      });
     }
     Navigator.pop(context);
   }
 
   void _onDismissedDireccion(DismissDirection direction, Band band) {
-    // ignore: todo
-    // TODO: llama la funccion de eliminar band
-    print(
-        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_onDismissedDireccion $direction");
-    print(
-        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_onDismissedDireccion ${band.name}");
+    setState(() {
+      bands = [];
+      socketServer.emit("removeBand", band.id);
+    });
   }
 }
